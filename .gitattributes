@@ -1,0 +1,10 @@
+# Normalize line endings: LF in the repository, on every platform.
+* text=auto eol=lf
+
+# Binary / generated
+*.png binary
+*.jpg binary
+*.svg text
+*.ico binary
+go.sum -diff
+package-lock.json -diff

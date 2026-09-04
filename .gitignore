@@ -1,0 +1,34 @@
+# Binaries
+/bin/
+/main
+/cleargate-decode
+*.exe
+*.dll
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+
+# Docker
+docker-compose.override.yml
+
+# IDEs
+.vscode/
+.idea/
+
+# Go
+/vendor/
+go.work
+
+# Node / Frontend
+node_modules/
+/dashboard/node_modules/
+/dashboard/dist/
+/dashboard/build/
+.DS_Store
+
+# Data Volumes (Local testing)
+/data/

@@ -1,0 +1,118 @@
+services:
+  # 1. Reverse Proxy (Gateway)
+  gateway:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./settings/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - cleargate-frontend
+      - cleargate-proxy
+    networks:
+      - cleargate-net
+
+  # 2. Frontend (Dashboard)
+  # Needs a Dockerfile in dashboard/
+  cleargate-frontend:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    networks:
+      - cleargate-net
+
+  # 3. Backend (Proxy)
+  cleargate-proxy:
+    build: .
+    environment:
+      - DB_DSN=postgres://cleargate:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/cleargate?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET:?set JWT_SECRET in .env (see .env.example)}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
+      - DASHBOARD_URL=${DASHBOARD_URL:-http://localhost}
+      - SUPERADMIN_EMAIL=${SUPERADMIN_EMAIL:-}
+      - SUPERADMIN_PASSWORD=${SUPERADMIN_PASSWORD:-}
+      - QDRANT_ADDR=qdrant:6334
+      - REDIS_ADDR=redis:6379
+      - OLLAMA_URL=http://ollama:11434
+      - PRESIDIO_URL=http://presidio:3000
+      - PORT=8080
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
+      presidio:
+        condition: service_started
+    networks:
+      - cleargate-net
+
+  # 4. Local AI: LlamaGuard (Ollama)
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - cleargate-net
+    # Note: On first run, you need to `docker exec -it ollama ollama pull llama-guard`
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Remove deploy block if no GPU
+
+  # 5. Local AI: PII Detection (Presidio)
+  presidio:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    ports:
+      - "3000:3000"
+    networks:
+      - cleargate-net
+
+  # 6. Database
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: cleargate
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: cleargate
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cleargate-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cleargate -d cleargate"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # 7. Vector DB
+  qdrant:
+    image: qdrant/qdrant:v1.1.1
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - cleargate-net
+
+  # 8. Cache
+  redis:
+    image: redis:alpine
+    networks:
+      - cleargate-net
+
+networks:
+  cleargate-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  ollama_data:

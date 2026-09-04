@@ -1,0 +1,25 @@
+.git
+.gitignore
+*.md
+!README.md
+LICENSE
+
+# Build output / binaries
+bin/
+main
+*.exe
+*.dll
+
+# Frontend build artifacts (the dashboard has its own Dockerfile)
+dashboard/node_modules/
+dashboard/dist/
+dashboard/build/
+
+# Local dev
+.env
+.env.*
+.vscode/
+.idea/
+data/
+*.log
+docker-compose.override.yml

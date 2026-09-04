@@ -1,0 +1,221 @@
+openapi: 3.1.0
+info:
+  title: ClearGate API
+  version: 0.1.0
+  description: >
+    Security gateway for LLM traffic. The proxy endpoint forwards to an upstream
+    provider after sanitizing the prompt; the admin API is used by the dashboard.
+  license:
+    name: BUSL-1.1
+    url: https://github.com/mathisbeugnies/cleargate/blob/main/LICENSE
+servers:
+  - url: http://localhost:8080
+
+# Most endpoints are unauthenticated or use per-request headers; the admin
+# operations override this with bearerAuth.
+security: []
+
+tags:
+  - name: proxy
+  - name: auth
+  - name: admin
+  - name: ops
+
+paths:
+  /:
+    post:
+      tags: [proxy]
+      summary: Proxy a request to an upstream LLM provider
+      description: >
+        The request path is forwarded as-is to the provider selected by
+        X-ClearGate-Provider (default `openai`). Send your own provider key in
+        `Authorization`. `"stream": true` bodies are relayed as SSE.
+      parameters:
+        - { name: X-ClearGate-Key, in: header, required: true, schema: { type: string }, description: Organization API key }
+        - { name: X-ClearGate-Provider, in: header, schema: { type: string, enum: [openai, anthropic, mistral] } }
+        - { name: X-ClearGate-User, in: header, schema: { type: string }, description: Caller-supplied end-user id for audit/anomaly tracking }
+        - { name: Authorization, in: header, schema: { type: string }, description: "The upstream provider credential, passed through untouched" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Upstream response (sanitized), passed through
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+
+  /api/signup:
+    post:
+      tags: [auth]
+      summary: Create an organization and its first admin
+      description: Rate-limited per IP. Returns the API key once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                org_name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  role: { type: string }
+                  email: { type: string }
+                  api_key: { type: string }
+                  org_id: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange credentials for a session token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  role: { type: string }
+                  email: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+
+  /api/config:
+    get:
+      tags: [admin]
+      summary: Read the organization's security policy
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Policy object, content: { application/json: { schema: { type: object } } } }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [admin]
+      summary: Update the organization's security policy
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        "200": { description: Updated }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/admin/audit:
+    get:
+      tags: [admin]
+      summary: List the organization's audit log
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer } }
+        - { name: offset, in: query, schema: { type: integer } }
+        - { name: verdict, in: query, schema: { type: string, enum: [PASS, MODIFY, BLOCK] } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: format, in: query, schema: { type: string, enum: [json, csv] } }
+      responses:
+        "200": { description: Log entries }
+        "401": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [admin]
+      summary: Delete this organization's audit entries older than 90 days
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: "{ deleted: n }" }
+
+  /api/admin/integrity:
+    get:
+      tags: [admin]
+      summary: Verify this organization's audit hash chain
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  total_checked: { type: integer }
+                  broken_at_id: { type: integer }
+                  error: { type: string }
+
+  /api/admin/reload:
+    post:
+      tags: [admin]
+      summary: Trigger a config reload (super_admin only)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Reloading }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /healthz:
+    get:
+      tags: [ops]
+      summary: Liveness probe
+      responses:
+        "200": { description: ok }
+
+  /readyz:
+    get:
+      tags: [ops]
+      summary: Readiness probe (checks the database)
+      responses:
+        "200": { description: ready }
+        "503": { description: db unreachable }
+
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Prometheus metrics
+      description: 'Requires an Authorization bearer token equal to METRICS_TOKEN when that variable is set.'
+      responses:
+        "200": { description: Exposition format }
+        "401": { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
